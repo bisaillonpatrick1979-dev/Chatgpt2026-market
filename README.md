@@ -1,21 +1,26 @@
 # Chatgpt2026 Market — QuantFarm AI
 
-Terminal de **paper trading uniquement**, conçu pour téléphone et tablette.
+Plateforme privée de **paper trading uniquement**, conçue pour téléphone, tablette et ordinateur.
 
-## Fonctions incluses
+## Fonctions opérationnelles
 
 - Modes manuel, assisté, autonome et replay historique
-- Portefeuille paper entièrement modifiable
-- Allocation distincte pour les agents IA
+- Portefeuille, ordres, positions, sessions et limites persistés dans Supabase
 - Sessions autonomes de 10 minutes, 1 heure, 4 heures ou illimitées
-- Graphiques en chandelles avec TradingView Lightweight Charts
-- Données Twelve Data côté serveur avec repli automatique sur des données simulées
-- Positions longues et courtes, lots, stop-loss, take-profit et profit/perte
-- Statut indicatif des marchés mondiaux en heure de l’Alberta
-- Authentification Supabase par courriel et mot de passe
-- Sauvegarde du portefeuille, des ordres, positions, agents, sessions et journaux dans Supabase
-- Isolation des données par utilisateur avec Row Level Security
-- Aucune intégration à un courtier réel dans ce MVP
+- Proposition IA avec approbation humaine en mode assisté
+- Moteur autonome paper fondé sur tendance, volatilité, confiance minimale et budget de risque
+- Kill switch persistant, perte maximale, nombre maximal de positions et risque maximal par transaction
+- Fermeture automatique optionnelle des positions d’agents à la fin d’une session
+- Graphiques TradingView Lightweight Charts
+- Twelve Data via clé chiffrée enregistrée dans l’application, avec repli automatique sur les données fictives
+- Heures locales et heures de l’Alberta pour NYSE/Nasdaq, TSX, Londres, Euronext, Tokyo, ASX, Forex et crypto
+- Séance de Tokyo divisée correctement entre le matin et l’après-midi
+- Journal de décisions placé immédiatement sous les positions ouvertes
+- Journal append-only avec chaîne de hachage SHA-256; les mises à jour, suppressions et troncatures sont interdites
+- Authentification Supabase et isolation des données avec Row Level Security
+- Onglet Paramètres & API pour Twelve Data, Polygon, Alpaca Paper, OANDA Practice et la préparation IBKR Paper
+- Secrets envoyés à une fonction Supabase authentifiée et chiffrés dans Supabase Vault
+- Connexions et identifiants de courtage réels explicitement verrouillés
 
 ## Démarrage local
 
@@ -31,30 +36,35 @@ Ouvrir `http://localhost:3000`.
 Créer un fichier `.env.local` :
 
 ```env
-TWELVE_DATA_API_KEY=votre_cle
 NEXT_PUBLIC_SUPABASE_URL=https://votre-projet.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=votre_cle_publishable
+
+# Facultatif : source Twelve Data serveur de secours.
+TWELVE_DATA_API_KEY=votre_cle
 ```
 
-`TWELVE_DATA_API_KEY` reste côté serveur. La clé publishable Supabase est conçue pour le navigateur; l’accès aux données est contrôlé par les politiques RLS de la base.
+La clé publishable Supabase est prévue pour le navigateur; l’accès aux données est contrôlé par RLS. Les clés saisies dans l’onglet Paramètres ne sont jamais stockées dans le navigateur ni retournées par l’API.
 
 ## Déploiement Vercel
 
-Ajouter les trois variables dans **Production**, **Preview** et **Development**, puis redéployer.
+Ajouter `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` dans **Production**, **Preview** et **Development**. `TWELVE_DATA_API_KEY` est facultative, puisque chaque utilisateur peut enregistrer sa propre clé dans Vault.
 
 Au premier compte créé, l’application initialise automatiquement :
 
 - un portefeuille paper de 100 000 $ CA;
 - une allocation d’agents de 10 000 $ CA;
 - six profils d’agents spécialisés;
-- un profil configuré sur le fuseau `America/Edmonton`.
+- un profil configuré sur `America/Edmonton`;
+- les limites de risque sécuritaires par défaut.
 
 ## Supabase
 
-Le projet utilise les tables `profiles`, `paper_wallets`, `agent_profiles`, `agent_sessions`, `orders`, `positions`, `trade_logs`, `watchlist_items` et `training_runs`. Toutes les tables exposées ont RLS activé et leurs politiques exigent que `auth.uid()` corresponde au propriétaire.
+Les données fonctionnelles utilisent `profiles`, `paper_wallets`, `agent_profiles`, `agent_sessions`, `orders`, `positions`, `trade_logs`, `watchlist_items`, `training_runs` et `integration_connections`. Toutes les tables exposées ont RLS activé. Les identifiants externes sont chiffrés dans Vault et manipulés seulement par la fonction Edge `integration-manager`.
 
-## Limites actuelles
+## Limites honnêtes
 
-- Le moteur autonome est une démonstration paper basée sur un signal de moyennes mobiles; il ne constitue pas une stratégie rentable prouvée.
-- Le calendrier affiche les séances régulières sans encore intégrer tous les jours fériés et fermetures anticipées.
-- Les cours Twelve Data sont rafraîchis à la demande; le flux WebSocket temps réel sera ajouté dans une phase suivante.
+- Le moteur autonome est un moteur d’expérimentation paper; aucune rentabilité n’est garantie ni démontrée.
+- Le calendrier calcule les séances régulières et les changements d’heure, mais les jours fériés et fermetures anticipées doivent encore être confirmés par une source officielle avant une future exécution réelle.
+- Alpaca et OANDA peuvent être authentifiés en environnement paper/practice, mais le routage des ordres externes n’est pas encore activé.
+- IBKR nécessite Client Portal Gateway ou OAuth avant qu’un test complet et un routage paper puissent être ajoutés.
+- Aucun ordre avec argent réel n’est permis dans cette version.
