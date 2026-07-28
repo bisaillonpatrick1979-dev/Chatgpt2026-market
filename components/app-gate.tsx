@@ -208,5 +208,5 @@ export function AppGate() {
     );
   }
 
-  return <MarketTerminal cloud={cloud} onSignOut={() => client?.auth.signOut()} />;
+  return <MarketTerminal cloud={cloud} onSignOut={async () => { await client?.auth.signOut(); }} />;
 }
