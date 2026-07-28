@@ -1,0 +1,5 @@
+-- Schéma de référence appliqué au projet Supabase Chatgpt2026-market.
+-- Les migrations réelles sont conservées dans l’historique Supabase.
+-- Tables: profiles, paper_wallets, agent_profiles, agent_sessions,
+-- orders, positions, trade_logs, watchlist_items, training_runs.
+-- Toutes les tables publiques ont RLS activé et sont limitées à auth.uid() = user_id.
