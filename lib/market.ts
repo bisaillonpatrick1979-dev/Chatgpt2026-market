@@ -27,7 +27,7 @@ export type Position = {
   stopLoss: number | null;
   takeProfit: number | null;
   openedAt: string;
-  origin: "manual" | "agent";
+  origin: "manual" | "assisted" | "agent";
 };
 
 export type TradeLog = {
