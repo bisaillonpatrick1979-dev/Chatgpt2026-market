@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { BackgroundIntelligenceAgent } from "@/components/background-intelligence-agent";
 import { GlobalNavigation } from "@/components/global-navigation";
+import { MarketDataInspector } from "@/components/market-data-inspector";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <GlobalNavigation />
         <BackgroundIntelligenceAgent />
+        <MarketDataInspector />
         {children}
       </body>
     </html>
