@@ -6,17 +6,31 @@ export type Candle = {
   close: number;
 };
 
+export type MarketDataMode = "live" | "mock" | "historical";
+export type MarketDataKind = "live" | "historical" | "mock" | "fallback";
+
 export type MarketDataResponse = {
   symbol: string;
   interval: string;
   source: "twelve-data" | "mock";
   delayed: boolean;
   candles: Candle[];
+  requestedMode?: MarketDataMode;
+  dataKind?: MarketDataKind;
+  providerName?: string;
+  providerSite?: string;
+  apiHost?: string;
+  transport?: string;
+  fallback?: boolean;
+  candleCount?: number;
+  historicalEndDate?: string;
   receivedAt?: string;
   latestCandleAt?: string;
   ageSeconds?: number;
   staleAfterSeconds?: number;
   stale?: boolean;
+  marketContext?: Record<string, unknown>;
+  providerMeta?: Record<string, unknown>;
   error?: string;
 };
 
