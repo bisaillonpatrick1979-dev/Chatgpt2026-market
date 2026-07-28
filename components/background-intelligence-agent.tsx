@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import styles from "./background-intelligence-agent.module.css";
@@ -34,10 +34,18 @@ type ResearchRun = {
   symbol: string;
   status: string;
   signal: "BUY" | "SELL" | "HOLD" | null;
-  confidence: number | null;
+  confidence: number | string | null;
   source_count: number;
   created_at: string;
   error: string | null;
+};
+
+type WalletRuntime = {
+  id: string;
+  initial_capital: number | string;
+  cash_balance: number | string;
+  agent_allocation: number | string;
+  kill_switch: boolean;
 };
 
 type RuntimeSnapshot = {
@@ -45,6 +53,7 @@ type RuntimeSnapshot = {
   latest: RuntimeSession | null;
   connections: Connection[];
   research: ResearchRun | null;
+  wallet: WalletRuntime | null;
 };
 
 const DURATIONS: Array<{ id: DurationPreset; label: string; seconds: number | null }> = [
@@ -61,6 +70,10 @@ function formatTime(value: string | null) {
     dateStyle: "short",
     timeStyle: "medium",
   }).format(new Date(value));
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 2 }).format(value);
 }
 
 function formatRemaining(endsAt: string | null, now: number) {
@@ -95,8 +108,10 @@ function statusTone(session: RuntimeSession | null, heartbeatAge: number | null)
 export function BackgroundIntelligenceAgent() {
   const client = useMemo(() => getSupabaseBrowserClient(), []);
   const [session, setSession] = useState<Session | null>(null);
-  const [snapshot, setSnapshot] = useState<RuntimeSnapshot>({ active: null, latest: null, connections: [], research: null });
+  const [snapshot, setSnapshot] = useState<RuntimeSnapshot>({ active: null, latest: null, connections: [], research: null, wallet: null });
   const [duration, setDuration] = useState<DurationPreset>("1h");
+  const [allocationText, setAllocationText] = useState("");
+  const allocationEditing = useRef(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -109,12 +124,12 @@ export function BackgroundIntelligenceAgent() {
 
   const refresh = useCallback(async () => {
     if (!session) {
-      setSnapshot({ active: null, latest: null, connections: [], research: null });
+      setSnapshot({ active: null, latest: null, connections: [], research: null, wallet: null });
       return;
     }
 
     const userId = session.user.id;
-    const [sessionsResult, connectionsResult, researchResult] = await Promise.all([
+    const [sessionsResult, connectionsResult, researchResult, walletResult] = await Promise.all([
       client
         .from("agent_sessions")
         .select("id,wallet_id,data_mode,status,started_at,ends_at,last_worker_heartbeat_at,last_cycle_at,last_cycle_status,last_cycle_message,last_symbol,next_cycle_at,cycle_count")
@@ -134,6 +149,11 @@ export function BackgroundIntelligenceAgent() {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      client
+        .from("paper_wallets")
+        .select("id,initial_capital,cash_balance,agent_allocation,kill_switch")
+        .eq("user_id", userId)
+        .maybeSingle(),
     ]);
 
     const rows = (sessionsResult.data || []) as RuntimeSession[];
@@ -141,13 +161,16 @@ export function BackgroundIntelligenceAgent() {
       (item.status === "running" || item.status === "paused") &&
       (!item.ends_at || new Date(item.ends_at).getTime() > Date.now()),
     ) || null;
+    const wallet = (walletResult.data || null) as WalletRuntime | null;
 
     setSnapshot({
       active,
       latest: rows[0] || null,
       connections: (connectionsResult.data || []) as Connection[],
       research: (researchResult.data || null) as ResearchRun | null,
+      wallet,
     });
+    if (wallet && !allocationEditing.current) setAllocationText(String(Number(wallet.agent_allocation)));
   }, [client, session]);
 
   useEffect(() => {
@@ -169,11 +192,17 @@ export function BackgroundIntelligenceAgent() {
   const active = snapshot.active;
   const heartbeatAge = ageSeconds(active?.last_worker_heartbeat_at || null, now);
   const tone = statusTone(active, heartbeatAge);
+  const capital = Number(snapshot.wallet?.initial_capital) || 0;
+  const allocation = Math.max(0, Math.min(capital || Number.MAX_SAFE_INTEGER, Number(allocationText) || 0));
 
   const startLiveSession = async () => {
     if (!session || busy) return;
     if (!connectionsReady) {
       setMessage("OpenAI et Twelve Data doivent être connectés et testés avant de démarrer l’IA serveur.");
+      return;
+    }
+    if (allocation <= 0) {
+      setMessage("Le capital autorisé aux agents doit être supérieur à 0 $ CA.");
       return;
     }
 
@@ -222,8 +251,15 @@ export function BackgroundIntelligenceAgent() {
       });
       if (insertResult.error) throw insertResult.error;
 
-      await client.from("paper_wallets").update({ trading_mode: "autonomous", updated_at: startedAt.toISOString() }).eq("id", walletResult.data.id).eq("user_id", userId);
+      const walletUpdate = await client.from("paper_wallets").update({
+        trading_mode: "autonomous",
+        agent_allocation: allocation,
+        updated_at: startedAt.toISOString(),
+      }).eq("id", walletResult.data.id).eq("user_id", userId);
+      if (walletUpdate.error) throw walletUpdate.error;
+
       setMessage("IA serveur démarrée. Elle continuera même si l’onglet ou la tablette passe en arrière-plan.");
+      allocationEditing.current = false;
       await refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Démarrage de l’IA impossible.");
@@ -326,12 +362,25 @@ export function BackgroundIntelligenceAgent() {
         </div>
       )}
 
+      {!connectionsReady && (
+        <div className={styles.warning}>
+          Le véritable moteur IA est verrouillé tant qu’OpenAI et Twelve Data ne sont pas tous les deux connectés et testés. Ouvre « Paramètres & API » pour réenregistrer la connexion manquante.
+        </div>
+      )}
+
       {!active && (
-        <div className={styles.startControls}>
-          <div className={styles.durationButtons}>
-            {DURATIONS.map((item) => <button key={item.id} type="button" data-active={duration === item.id} onClick={() => setDuration(item.id)}>{item.label}</button>)}
+        <div className={styles.startArea}>
+          <label className={styles.allocationField}>
+            <span>Capital maximal autorisé aux agents</span>
+            <div><b>$ CA</b><input inputMode="decimal" value={allocationText} onFocus={(event) => { allocationEditing.current = true; event.currentTarget.select(); }} onBlur={() => { allocationEditing.current = false; }} onChange={(event) => setAllocationText(event.target.value)} /></div>
+            <small>{capital ? `Maximum du portefeuille : ${formatMoney(capital)}` : "Chargement du portefeuille…"}</small>
+          </label>
+          <div className={styles.startControls}>
+            <div className={styles.durationButtons}>
+              {DURATIONS.map((item) => <button key={item.id} type="button" data-active={duration === item.id} onClick={() => setDuration(item.id)}>{item.label}</button>)}
+            </div>
+            <button className={styles.startButton} type="button" disabled={busy || !connectionsReady || allocation <= 0} onClick={() => void startLiveSession()}>{busy ? "Démarrage…" : "DÉMARRER L’IA SERVEUR"}</button>
           </div>
-          <button className={styles.startButton} type="button" disabled={busy || !connectionsReady} onClick={() => void startLiveSession()}>{busy ? "Démarrage…" : "DÉMARRER L’IA SERVEUR"}</button>
         </div>
       )}
 
