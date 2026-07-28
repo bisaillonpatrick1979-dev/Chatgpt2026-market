@@ -12,6 +12,11 @@ export type MarketDataResponse = {
   source: "twelve-data" | "mock";
   delayed: boolean;
   candles: Candle[];
+  receivedAt?: string;
+  latestCandleAt?: string;
+  ageSeconds?: number;
+  staleAfterSeconds?: number;
+  stale?: boolean;
   error?: string;
 };
 
