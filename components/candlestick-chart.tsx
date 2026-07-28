@@ -6,12 +6,17 @@ import {
   ColorType,
   createChart,
   type CandlestickData,
+  type IChartApi,
+  type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/market";
 
 export function CandlestickChart({ candles }: { candles: Candle[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const fittedOnceRef = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -50,6 +55,22 @@ export function CandlestickChart({ candles }: { candles: Candle[] }) {
       priceLineVisible: true,
     });
 
+    chartRef.current = chart;
+    seriesRef.current = series;
+
+    return () => {
+      seriesRef.current = null;
+      chartRef.current = null;
+      fittedOnceRef.current = false;
+      chart.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series || candles.length === 0) return;
+
     const normalized: CandlestickData<UTCTimestamp>[] = candles.map((candle) => ({
       time: candle.time as UTCTimestamp,
       open: candle.open,
@@ -57,10 +78,16 @@ export function CandlestickChart({ candles }: { candles: Candle[] }) {
       low: candle.low,
       close: candle.close,
     }));
-    series.setData(normalized);
-    chart.timeScale().fitContent();
 
-    return () => chart.remove();
+    const visibleRange = fittedOnceRef.current ? chart.timeScale().getVisibleLogicalRange() : null;
+    series.setData(normalized);
+
+    if (!fittedOnceRef.current) {
+      chart.timeScale().fitContent();
+      fittedOnceRef.current = true;
+    } else if (visibleRange) {
+      chart.timeScale().setVisibleLogicalRange(visibleRange);
+    }
   }, [candles]);
 
   return <div ref={containerRef} className="chart-canvas" aria-label="Graphique en chandelles" />;
