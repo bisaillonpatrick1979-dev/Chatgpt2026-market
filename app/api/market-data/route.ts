@@ -35,6 +35,10 @@ function intervalSeconds(interval: string) {
   return map[interval] ?? 300;
 }
 
+function staleThreshold(interval: string) {
+  return Math.max(120, Math.round(intervalSeconds(interval) * 2.5));
+}
+
 function basePriceFor(symbol: string) {
   if (symbol.includes("BTC")) return 118000;
   if (symbol.includes("/")) return symbol === "USD/CAD" ? 1.37 : 1.16;
@@ -79,6 +83,26 @@ function normalizeSymbol(symbol: string) {
   return symbol.replace(/[^A-Z0-9/._-]/gi, "").slice(0, 24).toUpperCase();
 }
 
+function withFreshness(
+  response: Omit<MarketDataResponse, "receivedAt" | "latestCandleAt" | "ageSeconds" | "staleAfterSeconds" | "stale">,
+  interval: string,
+  forceStale = false,
+): MarketDataResponse {
+  const receivedAt = new Date();
+  const latestCandle = response.candles.at(-1);
+  const latestCandleAt = latestCandle ? new Date(latestCandle.time * 1000) : receivedAt;
+  const ageSeconds = Math.max(0, Math.floor((receivedAt.getTime() - latestCandleAt.getTime()) / 1000));
+  const staleAfterSeconds = staleThreshold(interval);
+  return {
+    ...response,
+    receivedAt: receivedAt.toISOString(),
+    latestCandleAt: latestCandleAt.toISOString(),
+    ageSeconds,
+    staleAfterSeconds,
+    stale: forceStale || ageSeconds > staleAfterSeconds,
+  };
+}
+
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const symbol = normalizeSymbol(params.get("symbol") || "AAPL");
@@ -89,13 +113,15 @@ export async function GET(request: NextRequest) {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
 
   if (!apiKey || mode === "mock" || mode === "historical") {
-    const response: MarketDataResponse = {
+    const historical = mode === "historical";
+    const response = withFreshness({
       symbol,
       interval,
       source: "mock",
-      delayed: mode !== "historical",
-      candles: generateMockCandles(symbol, interval, outputsize, mode === "historical"),
-    };
+      delayed: !historical,
+      candles: generateMockCandles(symbol, interval, outputsize, historical),
+      error: !apiKey && mode === "live" ? "Aucune source réelle serveur n’est configurée; données fictives utilisées." : undefined,
+    }, interval, mode === "live");
     return NextResponse.json(response);
   }
 
@@ -123,24 +149,24 @@ export async function GET(request: NextRequest) {
       close: Number(value.close),
     }));
 
-    const response: MarketDataResponse = {
+    const response = withFreshness({
       symbol,
       interval,
       source: "twelve-data",
       delayed: false,
       candles,
-    };
+    }, interval);
     return NextResponse.json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erreur de données inconnue";
-    const response: MarketDataResponse = {
+    const response = withFreshness({
       symbol,
       interval,
       source: "mock",
       delayed: true,
       error: message,
       candles: generateMockCandles(symbol, interval, outputsize, false),
-    };
+    }, interval, true);
     return NextResponse.json(response, { status: 200 });
   }
 }
