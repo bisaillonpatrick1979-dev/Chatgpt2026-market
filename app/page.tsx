@@ -1,5 +1,5 @@
-import { MarketTerminal } from "@/components/market-terminal";
+import { AppGate } from "@/components/app-gate";
 
 export default function Home() {
-  return <MarketTerminal />;
+  return <AppGate />;
 }
