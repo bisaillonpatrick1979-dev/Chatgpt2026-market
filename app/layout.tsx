@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AutonomousTradeMonitor } from "@/components/autonomous-trade-monitor";
 import { BackgroundIntelligenceAgent } from "@/components/background-intelligence-agent";
 import { GlobalNavigation } from "@/components/global-navigation";
 import { MarketDataInspector } from "@/components/market-data-inspector";
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <GlobalNavigation />
         <BackgroundIntelligenceAgent />
+        <AutonomousTradeMonitor />
         <MarketDataInspector />
         {children}
       </body>

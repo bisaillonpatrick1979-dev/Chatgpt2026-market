@@ -3,7 +3,26 @@
 }
 
 :global(.mode-strip .mode-button:nth-child(3)) {
+  display: flex !important;
+  flex-direction: column;
+}
+
+:global(.app-shell:has(.mode-strip .mode-button:nth-child(3).active) .control-panel) {
   display: none !important;
+}
+
+:global(.app-shell:has(.mode-strip .mode-button:nth-child(3).active) .side-column::before) {
+  content: "MODE AUTONOME CÔTÉ SERVEUR\A\AChoisis le capital et la durée dans le panneau autonome situé en haut. Les agents cherchent les occasions, ouvrent les positions paper, placent les stop-loss et take-profit, remontent les stops et ferment les transactions automatiquement.";
+  display: block;
+  white-space: pre-line;
+  margin-bottom: 14px;
+  padding: 18px;
+  border: 1px solid rgba(78, 184, 142, 0.36);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(22, 100, 76, 0.22), rgba(10, 35, 54, 0.88));
+  color: #c9f6e1;
+  font-weight: 700;
+  line-height: 1.55;
 }
 
 .card {
