@@ -27,13 +27,27 @@ export function getSupabaseBrowserClient() {
   }
 
   if (!browserClient) {
-    browserClient = createClient(url, publishableKey, {
+    const client = createClient(url, publishableKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
       },
     });
+
+    // Supabase exposes `functions` through a getter that creates a new object on
+    // every access. React callbacks that list `client.functions` as a dependency
+    // would therefore be recreated after every render and could trigger endless
+    // loading effects. Shadow the getter once with the same stable instance.
+    const stableFunctionsClient = client.functions;
+    Object.defineProperty(client, "functions", {
+      value: stableFunctionsClient,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+
+    browserClient = client;
   }
 
   return browserClient;
