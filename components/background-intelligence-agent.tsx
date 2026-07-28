@@ -1,70 +1,105 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-import { SYMBOLS, type Candle } from "@/lib/market";
+import styles from "./background-intelligence-agent.module.css";
 
-const LOCK_KEY = "quantfarm:background-intelligence-lock";
-const CURSOR_KEY = "quantfarm:background-intelligence-cursor";
-const DEFAULT_INTERVAL = "5min";
+type DurationPreset = "10m" | "1h" | "4h" | "unlimited";
 
-function mean(values: number[]) {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+type RuntimeSession = {
+  id: string;
+  wallet_id: string;
+  data_mode: "live" | "mock" | "historical";
+  status: "running" | "paused" | "completed" | "stopped";
+  started_at: string;
+  ends_at: string | null;
+  last_worker_heartbeat_at: string | null;
+  last_cycle_at: string | null;
+  last_cycle_status: string | null;
+  last_cycle_message: string | null;
+  last_symbol: string | null;
+  next_cycle_at: string | null;
+  cycle_count: number;
+};
+
+type Connection = {
+  provider: string;
+  environment: string;
+  status: "not_tested" | "connected" | "error" | "disabled";
+  last_error: string | null;
+};
+
+type ResearchRun = {
+  symbol: string;
+  status: string;
+  signal: "BUY" | "SELL" | "HOLD" | null;
+  confidence: number | null;
+  source_count: number;
+  created_at: string;
+  error: string | null;
+};
+
+type RuntimeSnapshot = {
+  active: RuntimeSession | null;
+  latest: RuntimeSession | null;
+  connections: Connection[];
+  research: ResearchRun | null;
+};
+
+const DURATIONS: Array<{ id: DurationPreset; label: string; seconds: number | null }> = [
+  { id: "10m", label: "10 min", seconds: 600 },
+  { id: "1h", label: "1 heure", seconds: 3600 },
+  { id: "4h", label: "4 heures", seconds: 14400 },
+  { id: "unlimited", label: "Illimité", seconds: null },
+];
+
+function formatTime(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("fr-CA", {
+    timeZone: "America/Edmonton",
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(new Date(value));
 }
 
-function technicalContext(candles: Candle[], source: string, freshness: Record<string, unknown>) {
-  const latest = candles.at(-1);
-  const previous = candles.at(-2);
-  const five = candles.slice(-5);
-  const twenty = candles.slice(-20);
-  const fourteen = candles.slice(-14);
-  const sma5 = mean(five.map((candle) => candle.close));
-  const sma20 = mean(twenty.map((candle) => candle.close));
-  const atr14 = fourteen.length
-    ? fourteen.reduce((sum, candle) => sum + Math.max(candle.high - candle.low, 0.000001), 0) / fourteen.length
-    : 0;
-  return {
-    lastPrice: latest?.close || 0,
-    changePct: latest && previous ? ((latest.close - previous.close) / previous.close) * 100 : 0,
-    sma5,
-    sma20,
-    atr14,
-    high20: twenty.length ? Math.max(...twenty.map((candle) => candle.high)) : 0,
-    low20: twenty.length ? Math.min(...twenty.map((candle) => candle.low)) : 0,
-    trend: sma5 > sma20 ? "up" : sma5 < sma20 ? "down" : "flat",
-    candleCount: candles.length,
-    dataSource: source,
-    ...freshness,
-  };
+function formatRemaining(endsAt: string | null, now: number) {
+  if (!endsAt) return "ILLIMITÉ";
+  const seconds = Math.max(0, Math.floor((new Date(endsAt).getTime() - now) / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return [hours, minutes, secs].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
-function acquireLock(owner: string) {
-  try {
-    const now = Date.now();
-    const current = JSON.parse(localStorage.getItem(LOCK_KEY) || "null") as { owner?: string; expiresAt?: number } | null;
-    if (current?.owner !== owner && Number(current?.expiresAt) > now) return false;
-    localStorage.setItem(LOCK_KEY, JSON.stringify({ owner, expiresAt: now + 120_000 }));
-    return true;
-  } catch {
-    return true;
-  }
+function ageSeconds(value: string | null, now: number) {
+  return value ? Math.max(0, Math.floor((now - new Date(value).getTime()) / 1000)) : null;
 }
 
-function releaseLock(owner: string) {
-  try {
-    const current = JSON.parse(localStorage.getItem(LOCK_KEY) || "null") as { owner?: string } | null;
-    if (current?.owner === owner) localStorage.removeItem(LOCK_KEY);
-  } catch {
-    // A failed local lock must never interrupt the paper terminal.
-  }
+function runtimeLabel(session: RuntimeSession | null) {
+  if (!session) return "ARRÊTÉ";
+  if (session.status === "paused") return "EN PAUSE";
+  if (session.data_mode !== "live") return "SIMULATION LOCALE";
+  return "IA SERVEUR ACTIVE";
+}
+
+function statusTone(session: RuntimeSession | null, heartbeatAge: number | null) {
+  if (!session) return "off";
+  if (session.status === "paused") return "paused";
+  if (session.data_mode !== "live") return "mock";
+  if (session.last_cycle_status === "error") return "error";
+  if (heartbeatAge !== null && heartbeatAge <= 150) return "ok";
+  return "waiting";
 }
 
 export function BackgroundIntelligenceAgent() {
   const client = useMemo(() => getSupabaseBrowserClient(), []);
   const [session, setSession] = useState<Session | null>(null);
-  const owner = useRef(crypto.randomUUID());
-  const cycleRunning = useRef(false);
+  const [snapshot, setSnapshot] = useState<RuntimeSnapshot>({ active: null, latest: null, connections: [], research: null });
+  const [duration, setDuration] = useState<DurationPreset>("1h");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     void client.auth.getSession().then(({ data }) => setSession(data.session));
@@ -72,152 +107,245 @@ export function BackgroundIntelligenceAgent() {
     return () => listener.subscription.unsubscribe();
   }, [client]);
 
-  const runCycle = useCallback(async () => {
-    if (!session || cycleRunning.current || document.visibilityState === "hidden") return;
-    if (!acquireLock(owner.current)) return;
-    cycleRunning.current = true;
+  const refresh = useCallback(async () => {
+    if (!session) {
+      setSnapshot({ active: null, latest: null, connections: [], research: null });
+      return;
+    }
 
-    try {
-      const userId = session.user.id;
-      const { data: activeSession, error: activeError } = await client
+    const userId = session.user.id;
+    const [sessionsResult, connectionsResult, researchResult] = await Promise.all([
+      client
         .from("agent_sessions")
-        .select("id,data_mode,status,started_at")
+        .select("id,wallet_id,data_mode,status,started_at,ends_at,last_worker_heartbeat_at,last_cycle_at,last_cycle_status,last_cycle_message,last_symbol,next_cycle_at,cycle_count")
         .eq("user_id", userId)
         .eq("trading_mode", "autonomous")
-        .eq("status", "running")
         .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (activeError || !activeSession || activeSession.data_mode !== "live") return;
-
-      const [settingsResult, connectionsResult, watchlistResult, positionsResult] = await Promise.all([
-        client
-          .from("intelligence_settings")
-          .select("enabled,auto_refresh_minutes,max_research_age_minutes")
-          .eq("user_id", userId)
-          .maybeSingle(),
-        client
-          .from("integration_connections")
-          .select("provider,environment,status")
-          .eq("user_id", userId)
-          .in("provider", ["openai", "twelve_data"]),
-        client
-          .from("watchlist_items")
-          .select("symbol,label,exchange,asset_type")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: true }),
-        client
-          .from("positions")
-          .select("symbol,asset_type")
-          .eq("user_id", userId)
-          .eq("status", "open"),
-      ]);
-
-      if (settingsResult.error || settingsResult.data?.enabled === false) return;
-      const connections = connectionsResult.data || [];
-      const hasOpenAi = connections.some((item) => item.provider === "openai" && item.environment === "ai");
-      const hasTwelveData = connections.some((item) => item.provider === "twelve_data" && item.environment === "data");
-      if (!hasOpenAi || !hasTwelveData) return;
-
-      let watchlist = watchlistResult.data || [];
-      if (!watchlist.length) {
-        const defaults = SYMBOLS.map((item) => ({
-          user_id: userId,
-          symbol: item.symbol,
-          label: item.label,
-          exchange: item.market,
-          asset_type: item.symbol.includes("BTC") ? "crypto" : item.symbol.includes("/") ? "forex" : "equity",
-        }));
-        const { data } = await client
-          .from("watchlist_items")
-          .upsert(defaults, { onConflict: "user_id,symbol", ignoreDuplicates: true })
-          .select("symbol,label,exchange,asset_type");
-        watchlist = data || defaults;
-      }
-
-      const prioritySymbols = [...new Set([
-        ...(positionsResult.data || []).map((position) => position.symbol),
-        ...watchlist.map((item) => item.symbol),
-      ])].slice(0, 20);
-      if (!prioritySymbols.length) return;
-
-      const { data: recentRuns } = await client
-        .from("market_research_runs")
-        .select("symbol,status,expires_at,created_at")
+        .limit(8),
+      client
+        .from("integration_connections")
+        .select("provider,environment,status,last_error")
         .eq("user_id", userId)
-        .in("symbol", prioritySymbols)
-        .eq("status", "completed")
-        .order("created_at", { ascending: false });
+        .in("provider", ["openai", "twelve_data"]),
+      client
+        .from("market_research_runs")
+        .select("symbol,status,signal,confidence,source_count,created_at,error")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-      const validSymbols = new Set<string>();
-      for (const run of recentRuns || []) {
-        if (run.expires_at && new Date(run.expires_at).getTime() > Date.now()) validSymbols.add(run.symbol);
-      }
-      const expired = prioritySymbols.filter((symbol) => !validSymbols.has(symbol));
-      if (!expired.length) return;
+    const rows = (sessionsResult.data || []) as RuntimeSession[];
+    const active = rows.find((item) =>
+      (item.status === "running" || item.status === "paused") &&
+      (!item.ends_at || new Date(item.ends_at).getTime() > Date.now()),
+    ) || null;
 
-      let cursor = 0;
-      try { cursor = Number(localStorage.getItem(CURSOR_KEY)) || 0; } catch { cursor = 0; }
-      const targetSymbol = expired[cursor % expired.length];
-      try { localStorage.setItem(CURSOR_KEY, String(cursor + 1)); } catch { /* optional */ }
-
-      const symbolInfo = SYMBOLS.find((item) => item.symbol === targetSymbol);
-      const assetType = targetSymbol.includes("BTC") ? "crypto" : targetSymbol.includes("/") ? "forex" : "equity";
-      const { data: market, error: marketError } = await client.functions.invoke("integration-manager", {
-        body: {
-          action: "market_data",
-          provider: "twelve_data",
-          environment: "data",
-          symbol: targetSymbol,
-          interval: DEFAULT_INTERVAL,
-          outputsize: 180,
-        },
-      });
-      if (marketError || market?.error || !Array.isArray(market?.candles)) return;
-
-      const candles = market.candles as Candle[];
-      if (candles.length < 30 || market.stale) return;
-      const context = technicalContext(candles, String(market.source || "twelve-data"), {
-        receivedAt: market.receivedAt,
-        latestCandleAt: market.latestCandleAt,
-        dataAgeSeconds: market.ageSeconds,
-        staleAfterSeconds: market.staleAfterSeconds,
-        stale: market.stale,
-        market: symbolInfo?.market || "Unknown",
-        currency: symbolInfo?.currency || "USD",
-        automaticCycle: true,
-        activeSessionId: activeSession.id,
-      });
-
-      await client.functions.invoke("market-intelligence", {
-        body: {
-          symbol: targetSymbol,
-          assetType,
-          interval: DEFAULT_INTERVAL,
-          horizon: "intraday",
-          mode: "quick",
-          dataMode: "live",
-          technicalContext: context,
-        },
-      });
-    } finally {
-      cycleRunning.current = false;
-      releaseLock(owner.current);
-    }
+    setSnapshot({
+      active,
+      latest: rows[0] || null,
+      connections: (connectionsResult.data || []) as Connection[],
+      research: (researchResult.data || null) as ResearchRun | null,
+    });
   }, [client, session]);
 
   useEffect(() => {
     if (!session) return;
-    const initial = window.setTimeout(() => void runCycle(), 3_000);
-    const timer = window.setInterval(() => void runCycle(), 30_000);
-    const onVisibility = () => { if (document.visibilityState === "visible") void runCycle(); };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [runCycle, session]);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, session]);
 
-  return null;
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const connection = (provider: string, environment: string) => snapshot.connections.find((item) => item.provider === provider && item.environment === environment);
+  const openAi = connection("openai", "ai");
+  const twelve = connection("twelve_data", "data");
+  const connectionsReady = openAi?.status === "connected" && twelve?.status === "connected";
+  const active = snapshot.active;
+  const heartbeatAge = ageSeconds(active?.last_worker_heartbeat_at || null, now);
+  const tone = statusTone(active, heartbeatAge);
+
+  const startLiveSession = async () => {
+    if (!session || busy) return;
+    if (!connectionsReady) {
+      setMessage("OpenAI et Twelve Data doivent être connectés et testés avant de démarrer l’IA serveur.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+    try {
+      const userId = session.user.id;
+      const walletResult = await client
+        .from("paper_wallets")
+        .select("id,initial_capital,cash_balance,kill_switch,risk_settings")
+        .eq("user_id", userId)
+        .single();
+      if (walletResult.error) throw walletResult.error;
+      if (walletResult.data.kill_switch) throw new Error("Le kill switch est actif. Désactive-le avant de démarrer l’IA.");
+
+      await client
+        .from("agent_sessions")
+        .update({
+          status: "stopped",
+          stopped_at: new Date().toISOString(),
+          last_cycle_status: "replaced",
+          last_cycle_message: "Remplacée par une nouvelle session IA serveur.",
+        })
+        .eq("user_id", userId)
+        .eq("trading_mode", "autonomous")
+        .in("status", ["running", "paused"]);
+
+      const preset = DURATIONS.find((item) => item.id === duration) || DURATIONS[1];
+      const startedAt = new Date();
+      const id = crypto.randomUUID();
+      const insertResult = await client.from("agent_sessions").insert({
+        id,
+        user_id: userId,
+        wallet_id: walletResult.data.id,
+        trading_mode: "autonomous",
+        data_mode: "live",
+        duration_seconds: preset.seconds,
+        status: "running",
+        started_at: startedAt.toISOString(),
+        ends_at: preset.seconds === null ? null : new Date(startedAt.getTime() + preset.seconds * 1000).toISOString(),
+        starting_equity: Number(walletResult.data.cash_balance),
+        settings: walletResult.data.risk_settings || {},
+        next_cycle_at: startedAt.toISOString(),
+        last_cycle_status: "queued",
+        last_cycle_message: "Session créée. Le travailleur serveur prendra le prochain cycle automatique.",
+      });
+      if (insertResult.error) throw insertResult.error;
+
+      await client.from("paper_wallets").update({ trading_mode: "autonomous", updated_at: startedAt.toISOString() }).eq("id", walletResult.data.id).eq("user_id", userId);
+      setMessage("IA serveur démarrée. Elle continuera même si l’onglet ou la tablette passe en arrière-plan.");
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Démarrage de l’IA impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSession = async (action: "pause" | "resume" | "stop") => {
+    if (!session || !active || busy) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const nextStatus = action === "pause" ? "paused" : action === "resume" ? "running" : "stopped";
+      const patch: Record<string, unknown> = {
+        status: nextStatus,
+        last_cycle_status: nextStatus,
+        last_cycle_message: action === "pause" ? "Session mise en pause par l’utilisateur." : action === "resume" ? "Session reprise; prochain cycle serveur en attente." : "Session arrêtée par l’utilisateur.",
+      };
+      if (action === "pause") patch.paused_at = new Date().toISOString();
+      if (action === "resume") {
+        patch.paused_at = null;
+        patch.next_cycle_at = new Date().toISOString();
+        patch.worker_lease_until = null;
+      }
+      if (action === "stop") {
+        patch.stopped_at = new Date().toISOString();
+        patch.next_cycle_at = null;
+        patch.worker_lease_until = null;
+      }
+
+      const result = await client.from("agent_sessions").update(patch).eq("id", active.id).eq("user_id", session.user.id);
+      if (result.error) throw result.error;
+      if (action === "stop") await client.from("paper_wallets").update({ trading_mode: "manual", updated_at: new Date().toISOString() }).eq("id", active.wallet_id).eq("user_id", session.user.id);
+      setMessage(action === "pause" ? "IA en pause." : action === "resume" ? "IA reprise." : "IA arrêtée.");
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Action impossible.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!session) return null;
+
+  const visibleSession = active || snapshot.latest;
+  const isLive = active?.data_mode === "live";
+  const workerOnline = isLive && heartbeatAge !== null && heartbeatAge <= 150;
+
+  return (
+    <section className={styles.card} aria-label="État du travailleur IA autonome">
+      <div className={styles.header}>
+        <div>
+          <p>TRAVAILLEUR AUTONOME CÔTÉ SERVEUR</p>
+          <h2>L’IA continue sans dépendre du graphique ou de l’onglet</h2>
+        </div>
+        <span data-tone={tone}>{runtimeLabel(active)}</span>
+      </div>
+
+      <div className={styles.connectionRow}>
+        <div><small>OpenAI</small><strong data-ok={openAi?.status === "connected"}>{openAi?.status === "connected" ? "Connecté" : "Non prêt"}</strong></div>
+        <div><small>Twelve Data</small><strong data-ok={twelve?.status === "connected"}>{twelve?.status === "connected" ? "Connecté" : "Non prêt"}</strong></div>
+        <div><small>Travailleur serveur</small><strong data-ok={workerOnline}>{active ? workerOnline ? "En ligne" : active.data_mode === "live" ? "En attente du prochain cycle" : "Non utilisé en mode fictif" : "Arrêté"}</strong></div>
+        <div><small>Exécution</small><strong data-ok>Paper seulement</strong></div>
+      </div>
+
+      {active ? (
+        <div className={styles.runtimeGrid}>
+          <article>
+            <small>Temps restant</small>
+            <strong className={styles.countdown}>{formatRemaining(active.ends_at, now)}</strong>
+          </article>
+          <article>
+            <small>Mode de données</small>
+            <strong>{active.data_mode === "live" ? "Réel · Twelve Data + OpenAI" : active.data_mode === "mock" ? "Fictif · algorithme local" : "Historique · replay"}</strong>
+          </article>
+          <article>
+            <small>Dernier cycle</small>
+            <strong>{active.last_cycle_status || "En attente"}</strong>
+            <span>{formatTime(active.last_cycle_at)}</span>
+          </article>
+          <article>
+            <small>Dernier instrument</small>
+            <strong>{active.last_symbol || "—"}</strong>
+            <span>{active.cycle_count} cycle{active.cycle_count === 1 ? "" : "s"}</span>
+          </article>
+        </div>
+      ) : (
+        <div className={styles.stopped}>Aucune session autonome active. Choisis une durée pour démarrer le véritable moteur OpenAI côté serveur.</div>
+      )}
+
+      {visibleSession?.last_cycle_message && <div className={styles.cycleMessage} data-error={visibleSession.last_cycle_status === "error"}>{visibleSession.last_cycle_message}</div>}
+
+      {snapshot.research && (
+        <div className={styles.research}>
+          <span>Dernière recherche IA</span>
+          <strong>{snapshot.research.symbol} · {snapshot.research.status === "completed" ? snapshot.research.signal || "TERMINÉE" : snapshot.research.status.toUpperCase()}</strong>
+          <em>{snapshot.research.confidence === null ? "—" : `${Math.round(Number(snapshot.research.confidence) * 100)} %`} · {snapshot.research.source_count || 0} sources · {formatTime(snapshot.research.created_at)}</em>
+          {snapshot.research.error && <p>{snapshot.research.error}</p>}
+        </div>
+      )}
+
+      {!active && (
+        <div className={styles.startControls}>
+          <div className={styles.durationButtons}>
+            {DURATIONS.map((item) => <button key={item.id} type="button" data-active={duration === item.id} onClick={() => setDuration(item.id)}>{item.label}</button>)}
+          </div>
+          <button className={styles.startButton} type="button" disabled={busy || !connectionsReady} onClick={() => void startLiveSession()}>{busy ? "Démarrage…" : "DÉMARRER L’IA SERVEUR"}</button>
+        </div>
+      )}
+
+      {active && (
+        <div className={styles.sessionActions}>
+          {active.status === "paused"
+            ? <button type="button" disabled={busy} onClick={() => void updateSession("resume")}>Reprendre</button>
+            : <button type="button" disabled={busy} onClick={() => void updateSession("pause")}>Pause</button>}
+          <button type="button" disabled={busy} onClick={() => void updateSession("stop")}>Arrêter</button>
+        </div>
+      )}
+
+      {active?.data_mode !== "live" && active && <div className={styles.warning}>Cette session a été démarrée avec les données fictives de l’ancien contrôle. OpenAI n’est pas utilisé dans ce mode. Arrête-la, puis démarre « IA serveur ».</div>}
+      {message && <div className={styles.userMessage}>{message}</div>}
+    </section>
+  );
 }
