@@ -177,7 +177,7 @@ export function AppGate() {
     setLoading(true);
     setCloud(null);
 
-    const promise = (async () => {
+    const bootstrapPromise = (async () => {
       try {
         const { data, error } = await client.auth.getUser();
         if (error || !data.user || data.user.id !== userId) throw error || new Error("Session invalide.");
@@ -191,13 +191,15 @@ export function AppGate() {
         activeUserIdRef.current = null;
         setMessage(error instanceof Error ? error.message : "Erreur Supabase inconnue.");
       } finally {
-        if (sequence === bootstrapSequenceRef.current) setLoading(false);
-        if (bootstrapRef.current?.promise === promise) bootstrapRef.current = null;
+        if (sequence === bootstrapSequenceRef.current) {
+          bootstrapRef.current = null;
+          setLoading(false);
+        }
       }
     })();
 
-    bootstrapRef.current = { userId, promise };
-    await promise;
+    bootstrapRef.current = { userId, promise: bootstrapPromise };
+    await bootstrapPromise;
   }, [client]);
 
   useEffect(() => {
