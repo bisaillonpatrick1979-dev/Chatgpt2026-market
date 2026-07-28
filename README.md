@@ -15,6 +15,8 @@ Plateforme privée de **paper trading uniquement**, conçue pour téléphone, ta
 - Sessions autonomes de 10 minutes, 1 heure, 4 heures ou illimitées
 - Proposition IA avec approbation humaine en mode assisté
 - Moteur autonome paper fondé sur tendance, volatilité, confiance minimale et budget de risque
+- Agent de recherche automatique actif pendant les sessions autonomes live paper
+- Garde serveur bloquant les entrées IA qui ne respectent pas la recherche ou la fraîcheur des prix
 - Kill switch persistant, perte maximale, nombre maximal de positions et risque maximal par transaction
 - Fermeture automatique optionnelle des positions d’agents à la fin d’une session
 - Graphiques TradingView Lightweight Charts
@@ -40,6 +42,23 @@ La route `/intelligence` permet de :
 - conserver les sources, les votes et le résultat de chaque recherche;
 - imposer automatiquement un signal **HOLD** lorsque les sources, la présence d’une source officielle ou la confiance sont insuffisantes;
 - bloquer la recherche Web actuelle pendant le replay historique afin d’éviter l’utilisation d’informations futures.
+
+Pendant une session autonome en mode live paper, `BackgroundIntelligenceAgent` :
+
+- vérifie que les connexions OpenAI et Twelve Data sont configurées;
+- crée une liste de surveillance initiale lorsqu’elle est vide;
+- fait tourner les symboles de la liste sans lancer plusieurs recherches simultanées;
+- renouvelle uniquement les recherches expirées;
+- transmet les prix, leur âge, SMA 5/20, ATR et plage récente aux agents;
+- ne fonctionne jamais pendant le replay historique.
+
+Avant l’insertion d’un ordre paper assisté ou autonome live, un déclencheur Supabase exige :
+
+- une source de prix réelle validée et non périmée;
+- une recherche IA terminée et non expirée;
+- une confiance supérieure au seuil configuré;
+- un signal BUY ou SELL correspondant exactement au côté de l’ordre;
+- le refus de toute entrée lorsque le consensus est HOLD.
 
 Les domaines autorisés, le nombre minimal de sources, la confiance minimale et la durée de validité d’une recherche sont configurables par utilisateur.
 
@@ -94,11 +113,11 @@ Au premier compte créé, l’application initialise automatiquement :
 
 ## Supabase
 
-Les données fonctionnelles utilisent notamment `profiles`, `paper_wallets`, `agent_profiles`, `agent_sessions`, `orders`, `positions`, `trade_logs`, `watchlist_items`, `training_runs`, `integration_connections`, `intelligence_settings`, `market_research_runs`, `market_research_sources` et `market_agent_votes`. Toutes les tables exposées ont RLS activé.
+Les données fonctionnelles utilisent notamment `profiles`, `paper_wallets`, `agent_profiles`, `agent_sessions`, `orders`, `positions`, `trade_logs`, `watchlist_items`, `training_runs`, `integration_connections`, `intelligence_settings`, `market_research_runs`, `market_research_sources`, `market_agent_votes` et `market_data_health`. Toutes les tables exposées ont RLS activé.
 
 Fonctions Edge :
 
-- `integration-manager` : secrets, tests de connexion et données Twelve Data;
+- `integration-manager` : secrets, tests de connexion, données Twelve Data et enregistrement de leur fraîcheur;
 - `market-intelligence` : recherche Web OpenAI, garde-fous de qualité et persistance des résultats.
 
 ## Limites honnêtes

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BackgroundIntelligenceAgent } from "@/components/background-intelligence-agent";
 import { GlobalNavigation } from "@/components/global-navigation";
 import "./globals.css";
 
@@ -12,6 +13,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="fr-CA">
       <body>
         <GlobalNavigation />
+        <BackgroundIntelligenceAgent />
         {children}
       </body>
     </html>
