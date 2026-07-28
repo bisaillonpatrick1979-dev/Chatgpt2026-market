@@ -1,3 +1,11 @@
+:global(.agent-panel) {
+  display: none !important;
+}
+
+:global(.mode-strip .mode-button:nth-child(3)) {
+  display: none !important;
+}
+
 .card {
   width: min(1480px, calc(100% - 32px));
   margin: 18px auto 4px;
@@ -191,11 +199,63 @@
   color: #ffaaaa;
 }
 
+.startArea {
+  display: grid;
+  grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.allocationField {
+  display: grid;
+  gap: 7px;
+  color: #b9c9db;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.allocationField > div {
+  display: flex;
+  align-items: center;
+  min-height: 50px;
+  overflow: hidden;
+  border: 1px solid rgba(103, 151, 206, 0.32);
+  border-radius: 11px;
+  background: rgba(10, 29, 53, 0.86);
+}
+
+.allocationField b {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+  background: rgba(54, 126, 198, 0.14);
+  color: #8ec6ff;
+  white-space: nowrap;
+}
+
+.allocationField input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 13px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1.15rem;
+  font-weight: 900;
+}
+
+.allocationField small {
+  color: #7f95ad;
+  font-weight: 500;
+}
+
 .startControls {
   display: flex;
   gap: 12px;
   align-items: stretch;
-  margin-top: 14px;
 }
 
 .durationButtons {
@@ -208,7 +268,7 @@
 .durationButtons button,
 .sessionActions button,
 .startButton {
-  min-height: 48px;
+  min-height: 50px;
   border: 1px solid rgba(103, 151, 206, 0.32);
   border-radius: 11px;
   background: rgba(17, 44, 75, 0.8);
@@ -265,6 +325,12 @@
   border-left: 3px solid #63d8a4;
   background: rgba(52, 146, 104, 0.11);
   color: #bcf2d8;
+}
+
+@media (max-width: 1100px) {
+  .startArea {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 980px) {
