@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { MarketTerminal } from "@/components/market-terminal";
-import type { CloudContext } from "@/lib/cloud";
+import type { CloudContext, RiskSettings } from "@/lib/cloud";
 import { getSupabaseBrowserClient, hasSupabaseEnvironment } from "@/lib/supabase-browser";
 import type { Position, TradeLog, TradingMode } from "@/lib/market";
 
@@ -41,6 +41,19 @@ function mapLog(row: Record<string, unknown>): TradeLog {
   };
 }
 
+function mapRiskSettings(value: unknown): Partial<RiskSettings> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const settings = value as Record<string, unknown>;
+  return {
+    riskPerTradePct: Number(settings.riskPerTradePct) || undefined,
+    maxDailyLossPct: Number(settings.maxDailyLossPct) || undefined,
+    maxPositions: Number(settings.maxPositions) || undefined,
+    minAgentConfidence: Number(settings.minAgentConfidence) || undefined,
+    closeAgentsAtEnd: typeof settings.closeAgentsAtEnd === "boolean" ? settings.closeAgentsAtEnd : undefined,
+    blockClosedMarkets: typeof settings.blockClosedMarkets === "boolean" ? settings.blockClosedMarkets : undefined,
+  };
+}
+
 async function bootstrapCloud(client: SupabaseClient, session: Session): Promise<CloudContext> {
   const userId = session.user.id;
   const email = session.user.email || "Compte Supabase";
@@ -74,6 +87,7 @@ async function bootstrapCloud(client: SupabaseClient, session: Session): Promise
         agent_allocation: 10000,
         trading_mode: "manual",
         base_currency: "CAD",
+        kill_switch: false,
       })
       .select("*")
       .single();
@@ -89,12 +103,15 @@ async function bootstrapCloud(client: SupabaseClient, session: Session): Promise
     risk_per_trade_pct: 0.25,
     priority: priority + 1,
   }));
-  const seedResult = await client.from("agent_profiles").upsert(seedRows, { onConflict: "user_id,name" });
+  const seedResult = await client.from("agent_profiles").upsert(seedRows, {
+    onConflict: "user_id,name",
+    ignoreDuplicates: true,
+  });
   if (seedResult.error) throw seedResult.error;
 
   const [positionsResult, logsResult] = await Promise.all([
     client.from("positions").select("*").eq("user_id", userId).eq("status", "open").order("opened_at", { ascending: false }),
-    client.from("trade_logs").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(50),
+    client.from("trade_logs").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(100),
   ]);
   if (positionsResult.error) throw positionsResult.error;
   if (logsResult.error) throw logsResult.error;
@@ -108,6 +125,8 @@ async function bootstrapCloud(client: SupabaseClient, session: Session): Promise
     cash: Number(wallet.cash_balance),
     agentAllocation: Number(wallet.agent_allocation),
     mode: (wallet.trading_mode || "manual") as TradingMode,
+    killSwitch: Boolean(wallet.kill_switch),
+    riskSettings: mapRiskSettings(wallet.risk_settings),
     positions: (positionsResult.data || []).map((row) => mapPosition(row as Record<string, unknown>)),
     logs: (logsResult.data || []).map((row) => mapLog(row as Record<string, unknown>)),
   };
@@ -133,6 +152,8 @@ export function AppGate() {
     }
     setLoading(true);
     try {
+      const { data, error } = await client.auth.getUser();
+      if (error || !data.user || data.user.id !== nextSession.user.id) throw error || new Error("Session invalide.");
       setCloud(await bootstrapCloud(client, nextSession));
       setMessage("");
     } catch (error) {
@@ -152,15 +173,15 @@ export function AppGate() {
   }, [client, loadSession]);
 
   const submitAuth = async () => {
-    if (!client || !email || password.length < 6) {
+    if (!client || !email.includes("@") || password.length < 6) {
       setMessage("Entre un courriel valide et un mot de passe d’au moins 6 caractères.");
       return;
     }
     setLoading(true);
     setMessage("");
     const result = creating
-      ? await client.auth.signUp({ email, password })
-      : await client.auth.signInWithPassword({ email, password });
+      ? await client.auth.signUp({ email: email.trim(), password })
+      : await client.auth.signInWithPassword({ email: email.trim(), password });
     if (result.error) {
       setMessage(result.error.message);
       setLoading(false);
@@ -181,7 +202,7 @@ export function AppGate() {
           <p>Ajoute ces deux variables dans le projet Vercel, pour Production, Preview et Development :</p>
           <code>NEXT_PUBLIC_SUPABASE_URL</code>
           <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>
-          <p className="muted">Redéploie ensuite l’application. La clé publishable est conçue pour le navigateur; les données restent protégées par RLS.</p>
+          <p className="muted">La clé publishable est conçue pour le navigateur; les données privées demeurent protégées par RLS.</p>
         </section>
       </main>
     );
@@ -197,7 +218,7 @@ export function AppGate() {
         <section className="auth-card">
           <p className="eyebrow">QUANTFARM AI · PAPER SEULEMENT</p>
           <h1>{creating ? "Créer le compte" : "Connexion"}</h1>
-          <p className="muted">Ton portefeuille, tes positions et tes agents seront privés dans Supabase.</p>
+          <p className="muted">Ton portefeuille, tes positions, tes clés chiffrées et tes agents restent privés.</p>
           <label>Courriel<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
           <label>Mot de passe<input type="password" autoComplete={creating ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
           {message && <div className="auth-message">{message}</div>}
@@ -208,5 +229,5 @@ export function AppGate() {
     );
   }
 
-  return <MarketTerminal cloud={cloud} onSignOut={async () => { await client?.auth.signOut(); }} />;
+  return <MarketTerminal cloud={cloud} onSignOut={() => client?.auth.signOut()} />;
 }
