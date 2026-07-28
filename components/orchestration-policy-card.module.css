@@ -132,6 +132,32 @@
   background: rgba(52, 195, 143, 0.06);
 }
 
+/* The orchestration is now managed by the dedicated policy card. Hide the
+   legacy free-text model fields so they cannot accidentally overwrite the
+   automatic Luna/Terra/Sol configuration. */
+:global(main[class*="intelligence-console"] section[class*="settingsGrid"] > article:first-child > label:nth-of-type(2)),
+:global(main[class*="intelligence-console"] section[class*="settingsGrid"] > article:nth-child(2) div[class*="formGrid"] > label:first-child) {
+  display: none;
+}
+
+/* Automatic price refreshes continue in the background, but the visible
+   button label remains stable instead of alternating every 30 seconds. */
+:global(main[class*="intelligence-console"] section[class*="topGrid"] > article:first-child div[class*="actions"] > button:first-child) {
+  position: relative;
+  min-width: 190px;
+  color: transparent !important;
+}
+
+:global(main[class*="intelligence-console"] section[class*="topGrid"] > article:first-child div[class*="actions"] > button:first-child::after) {
+  content: "Actualiser les prix";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #edf4ff;
+  pointer-events: none;
+}
+
 @media (max-width: 980px) {
   .modelGrid {
     grid-template-columns: 1fr;
