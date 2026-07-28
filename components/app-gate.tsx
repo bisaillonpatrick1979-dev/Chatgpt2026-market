@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { MarketTerminal } from "@/components/market-terminal";
 import type { CloudContext, RiskSettings } from "@/lib/cloud";
@@ -142,34 +142,80 @@ export function AppGate() {
   const [password, setPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const activeUserIdRef = useRef<string | null>(null);
+  const bootstrapSequenceRef = useRef(0);
+  const bootstrapRef = useRef<{ userId: string; promise: Promise<void> } | null>(null);
 
   const loadSession = useCallback(async (nextSession: Session | null) => {
     setSession(nextSession);
-    setCloud(null);
+
     if (!client || !nextSession) {
+      bootstrapSequenceRef.current += 1;
+      bootstrapRef.current = null;
+      activeUserIdRef.current = null;
+      setCloud(null);
       setLoading(false);
       return;
     }
-    setLoading(true);
-    try {
-      const { data, error } = await client.auth.getUser();
-      if (error || !data.user || data.user.id !== nextSession.user.id) throw error || new Error("Session invalide.");
-      setCloud(await bootstrapCloud(client, nextSession));
-      setMessage("");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erreur Supabase inconnue.");
-    } finally {
+
+    const userId = nextSession.user.id;
+
+    // TOKEN_REFRESHED and INITIAL_SESSION can fire after getSession for the same
+    // account. Keep the current terminal mounted instead of flashing the full
+    // portfolio loading screen or issuing duplicate bootstrap queries.
+    if (activeUserIdRef.current === userId) {
       setLoading(false);
+      return;
     }
+
+    if (bootstrapRef.current?.userId === userId) {
+      await bootstrapRef.current.promise;
+      return;
+    }
+
+    const sequence = ++bootstrapSequenceRef.current;
+    setLoading(true);
+    setCloud(null);
+
+    const promise = (async () => {
+      try {
+        const { data, error } = await client.auth.getUser();
+        if (error || !data.user || data.user.id !== userId) throw error || new Error("Session invalide.");
+        const nextCloud = await bootstrapCloud(client, nextSession);
+        if (sequence !== bootstrapSequenceRef.current) return;
+        activeUserIdRef.current = userId;
+        setCloud(nextCloud);
+        setMessage("");
+      } catch (error) {
+        if (sequence !== bootstrapSequenceRef.current) return;
+        activeUserIdRef.current = null;
+        setMessage(error instanceof Error ? error.message : "Erreur Supabase inconnue.");
+      } finally {
+        if (sequence === bootstrapSequenceRef.current) setLoading(false);
+        if (bootstrapRef.current?.promise === promise) bootstrapRef.current = null;
+      }
+    })();
+
+    bootstrapRef.current = { userId, promise };
+    await promise;
   }, [client]);
 
   useEffect(() => {
     if (!client) return;
-    void client.auth.getSession().then(({ data }) => loadSession(data.session));
-    const { data: listener } = client.auth.onAuthStateChange((_event, nextSession) => {
-      void loadSession(nextSession);
+    let active = true;
+
+    void client.auth.getSession().then(({ data }) => {
+      if (active) void loadSession(data.session);
     });
-    return () => listener.subscription.unsubscribe();
+
+    const { data: listener } = client.auth.onAuthStateChange((_event, nextSession) => {
+      if (active) void loadSession(nextSession);
+    });
+
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
   }, [client, loadSession]);
 
   const submitAuth = async () => {
