@@ -1,0 +1,12 @@
+create index agent_sessions_wallet_idx on public.agent_sessions (wallet_id);
+create index orders_wallet_idx on public.orders (wallet_id);
+create index orders_session_idx on public.orders (session_id) where session_id is not null;
+create index positions_wallet_idx on public.positions (wallet_id);
+create index positions_session_idx on public.positions (session_id) where session_id is not null;
+create index positions_opening_order_idx on public.positions (opening_order_id) where opening_order_id is not null;
+create index trade_logs_wallet_idx on public.trade_logs (wallet_id) where wallet_id is not null;
+create index trade_logs_session_idx on public.trade_logs (session_id) where session_id is not null;
+create index trade_logs_position_idx on public.trade_logs (position_id) where position_id is not null;
+create index trade_logs_order_idx on public.trade_logs (order_id) where order_id is not null;
+create index training_runs_wallet_idx on public.training_runs (wallet_id) where wallet_id is not null;
+create index training_runs_session_idx on public.training_runs (session_id) where session_id is not null;
