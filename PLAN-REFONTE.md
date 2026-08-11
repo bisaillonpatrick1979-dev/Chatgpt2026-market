@@ -54,17 +54,40 @@ Neuf dépôts de trading ont été créés entre juin et juillet 2026. Quatre m�
 
 ## 3. Phases
 
-### Phase 0 — Rapatrier le patrimoine `← EN COURS`
+### Phase 0 — Rapatrier le patrimoine `← FAIT le 11 août 2026`
 
 Objectif : plus aucun actif ne vit uniquement sur les serveurs Supabase.
 
-- [ ] Extraire les 28 migrations vers `supabase/migrations/<version>_<nom>.sql`
-- [ ] Extraire les 5 Edge Functions vers `supabase/functions/<slug>/index.ts`
-- [ ] Générer `supabase/schema.sql` complet (état consolidé, pour référence humaine)
-- [ ] Documenter les fonctions RPC dans `docs/rpc.md` : `execute_agent_paper_trade`, `get_integration_credentials`, `claim_autonomous_session_cycle`, `finish_autonomous_session_cycle`, `expire_autonomous_sessions`
-- [ ] Documenter les tâches planifiées (pg_cron) et leur cadence
+- [x] Extraire les 28 migrations vers `supabase/migrations/<version>_<nom>.sql`
+- [x] Extraire les 5 Edge Functions vers `supabase/functions/<slug>/index.ts`
+- [x] Générer `supabase/schema.sql` complet (état consolidé, pour référence humaine)
+- [x] Documenter les fonctions RPC dans `docs/rpc.md` : `execute_agent_paper_trade`, `get_integration_credentials`, `claim_autonomous_session_cycle`, `finish_autonomous_session_cycle`, `expire_autonomous_sessions`
+- [x] Documenter les tâches planifiées (pg_cron) et leur cadence
 
 **Critère de sortie :** le projet Supabase peut être recréé de zéro à partir du dépôt seul.
+
+**Résultat.** Les 28 migrations sont extraites et **vérifiées une à une par empreinte MD5**
+contre `supabase_migrations.schema_migrations` : 28 sur 28 sont identiques au caractère
+près à ce qui tourne en production. Le schéma consolidé fait 92 ko et couvre 18 tables,
+toutes avec RLS. `npm run build` passe. Aucune migration appliquée, aucune fonction
+déployée : extraction seule.
+
+Réserve honnête sur les Edge Functions : contrairement aux migrations, Supabase ne conserve
+pas d'empreinte du code source consultable, seulement celle du paquet compilé. Leur
+extraction ne bénéficie donc pas de la même vérification automatique que le SQL.
+
+Trois constats relevés au passage, à traiter aux phases prévues :
+
+- **D6 confirmé au code.** Dans `autonomous-market-worker`, `default_watchlist` est lu sur
+  les instruments alors qu'il est absent du `select` *et* du type `Instrument`. Le filtre
+  `!== false` compare donc toujours `undefined` et laisse tout passer. Fonctionne par
+  accident, comme prévu.
+- **Autorisation des RPC.** La migration `20260728080844` a retiré les vérifications
+  `current_user <> 'service_role'` du corps des fonctions ; la protection ne tient plus
+  qu'au privilège `EXECUTE`. C'est correct aujourd'hui, mais un `grant execute` mal placé
+  suffirait à ouvrir l'accès aux secrets. À couvrir par un test en phase 1.
+- **Aucun `package-lock.json` versionné.** Bloquant pour une CI reproductible ; à régler en
+  ouverture de phase 1.
 
 ### Phase 1 — Filet de sécurité
 
